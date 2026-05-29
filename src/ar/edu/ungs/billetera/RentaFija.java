@@ -26,4 +26,6 @@ public class RentaFija extends Inversion {
         
         return resultado;
     }
+    
+    
 }

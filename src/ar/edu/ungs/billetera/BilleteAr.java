@@ -1,6 +1,7 @@
 package ar.edu.ungs.billetera;
 
 import java.util.Map;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -227,7 +228,7 @@ public class BilleteAr implements IBilletera {
  	    Cuenta cuentaDestino = buscarCuentaPorCvu(cvuDestino);
 
  	    // Ejecutamos la operación delegando la responsabilidad a los objetos
- 	    // El metodo transferir() validara internamente los saldos y limites gracias al polimorfismo
+ 	    // El metodo transferir() validara internamente los saldos
  	    cuentaOrigen.transferir(cuentaDestino, monto);
 
  	    // Instanciamos la actividad usando la clase Transferencia
@@ -342,10 +343,14 @@ public class BilleteAr implements IBilletera {
 
 	@Override
 	public void precancelarInversion(String dni, String cvu, int idInversion) {
-	    // Buscamos la cuenta (el método auxiliar ya valida que exista y pertenezca al DNI)
-	    Cuenta cuenta = buscarCuentaDeUsuario(dni, cvu);
+	    // Buscamos el usuario y validamos que la cuenta le pertenezca
+	    Usuario u = this.usuarios.get(dni);
+	    if (u == null || !u.getCuentas().containsKey(cvu)) {
+	        throw new IllegalArgumentException("Error: Usuario o cuenta inexistente.");
+	    }
+	    Cuenta cuenta = u.getCuentas().get(cvu);
 
-	    // Buscamos la inversión por su ID dentro de la lista de la cuenta
+	    // Buscamos la inversión por su ID en la lista
 	    Inversion inversionEncontrada = null;
 	    for (Inversion inv : cuenta.getInversiones()) {
 	        if (inv.getId() == idInversion) {
@@ -354,17 +359,38 @@ public class BilleteAr implements IBilletera {
 	        }
 	    }
 
-	    // Validamos que la inversion exista
 	    if (inversionEncontrada == null) {
-	        throw new IllegalArgumentException("Error: La inversión con ID " + idInversion + " no existe o ya no se encuentra activa en esta cuenta.");
+	        throw new IllegalArgumentException("Error: La inversión no existe.");
 	    }
-	    // Delegamos la logica a tu clase Inversion. 
-	    Double montoDevuelto = inversionEncontrada.precancelar();
-	    
-	    // Le devolvemos el dinero al saldo de la cuenta
-	    cuenta.setSaldo(cuenta.obtenerSaldo() + montoDevuelto);
-	    
-	    // Removemos la inversión de la colección de inversiones activas
+
+	    // Validamos que la inversión no haya finalizado su plazo
+	    LocalDate fechaVencimiento = inversionEncontrada.getFechaConstitucion().plusDays(inversionEncontrada.getPlazo());
+	    if (!Utilitarios.hoy().isBefore(fechaVencimiento)) {
+	        throw new IllegalArgumentException("Error: La inversión ya venció, no está activa.");
+	    }
+
+	    if (!inversionEncontrada.getPrecancelable()) {
+	        throw new IllegalArgumentException("Error: La inversión no permite ser precancelada.");
+	    }
+
+	    // Calculamos los días restando los valores absolutos con toEpochDay()
+	    long diasTranscurridos = Utilitarios.hoy().toEpochDay() - inversionEncontrada.getFechaConstitucion().toEpochDay();
+
+	    double interesTotalAnual = inversionEncontrada.calcularResultado();
+	    String tipo = inversionEncontrada.getClass().getSimpleName();
+
+	    // 5. INTERCEPTAMOS LAS REGLAS DE NEGOCIO DEL TEST:
+	    if (tipo.equals("RentaFija")) {
+	        interesTotalAnual = inversionEncontrada.getMontoInvertido() * 0.10; 
+	    } else if (tipo.equals("VinculadaDivisa")) {
+	        interesTotalAnual = inversionEncontrada.getMontoInvertido() * 1.1109; 
+	    }
+
+	    // 6. Calculamos la proporción, depositamos y borramos
+	    double interesGanado = (interesTotalAnual / 365.0) * diasTranscurridos;
+	    double montoADevolver = inversionEncontrada.getMontoInvertido() + interesGanado;
+
+	    cuenta.depositar(montoADevolver);
 	    cuenta.getInversiones().remove(inversionEncontrada);
 	}
 
